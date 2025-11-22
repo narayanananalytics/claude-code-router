@@ -6,3 +6,8 @@ dist
 .DS_Store
 .vscode
 tsconfig.tsbuildinfo
+
+# Config files (keep example files)
+config.json
+config-*.json
+!config.example.json

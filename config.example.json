@@ -1,0 +1,72 @@
+{
+  "HOST": "0.0.0.0",
+  "PORT": 3456,
+  "APIKEY": "your-secure-api-key-here",
+  "Providers": [
+    {
+      "name": "anthropic",
+      "api_base_url": "https://api.anthropic.com/v1/messages",
+      "api_key": "sk-ant-YOUR_API_KEY_HERE",
+      "models": [
+        "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku-20241022",
+        "claude-3-opus-20240229"
+      ]
+    },
+    {
+      "name": "openai",
+      "api_base_url": "https://api.openai.com/v1/chat/completions",
+      "api_key": "sk-YOUR_API_KEY_HERE",
+      "models": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo"
+      ]
+    },
+    {
+      "name": "gemini",
+      "api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/",
+      "api_key": "YOUR_GOOGLE_API_KEY_HERE",
+      "models": [
+        "gemini-2.0-flash-exp",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash"
+      ],
+      "transformer": {
+        "use": ["gemini"]
+      }
+    },
+    {
+      "name": "deepseek",
+      "api_base_url": "https://api.deepseek.com/chat/completions",
+      "api_key": "sk-YOUR_API_KEY_HERE",
+      "models": [
+        "deepseek-chat",
+        "deepseek-reasoner"
+      ],
+      "transformer": {
+        "use": ["deepseek"],
+        "deepseek-chat": {
+          "use": ["tooluse"]
+        }
+      }
+    },
+    {
+      "name": "ollama",
+      "api_base_url": "http://localhost:11434/v1/chat/completions",
+      "api_key": "ollama",
+      "models": [
+        "qwen2.5-coder:latest",
+        "llama3.2:latest",
+        "codellama:latest"
+      ]
+    }
+  ],
+  "Router": {
+    "default": "anthropic,claude-3-5-sonnet-20241022",
+    "background": "openai,gpt-4o-mini",
+    "think": "anthropic,claude-3-5-sonnet-20241022",
+    "longContext": "anthropic,claude-3-5-sonnet-20241022",
+    "webSearch": "anthropic,claude-3-5-sonnet-20241022"
+  }
+}
