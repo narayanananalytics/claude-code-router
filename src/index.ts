@@ -73,6 +73,12 @@ async function run(options: RunOptions = {}) {
 
   const port = config.PORT || 3456;
 
+  // Validate port to prevent SSRF attacks
+  if (typeof port !== 'number' || port < 1024 || port > 65535) {
+    console.error(`Invalid PORT: ${port}. Must be between 1024-65535`);
+    process.exit(1);
+  }
+
   // Save the PID of the background process
   savePid(process.pid);
 
@@ -146,6 +152,14 @@ async function run(options: RunOptions = {}) {
   process.on("unhandledRejection", (reason, promise) => {
     server.logger.error("Unhandled rejection at:", promise, "reason:", reason);
   });
+  // Generate admin token for this session
+  const crypto = await import("crypto");
+  const ADMIN_TOKEN = crypto.randomBytes(32).toString('hex');
+  if (config.LOG !== false) {
+    console.log(`\n🔐 Admin token for this session: ${ADMIN_TOKEN}`);
+    console.log('Set this as x-admin-token header for admin operations (update/restart)\n');
+  }
+
   // Add async preHandler hook for authentication
   server.addHook("preHandler", async (req, reply) => {
     return new Promise((resolve, reject) => {
@@ -157,6 +171,25 @@ async function run(options: RunOptions = {}) {
       apiKeyAuth(config)(req, reply, done).catch(reject);
     });
   });
+
+  // Add admin access control for critical operations
+  server.addHook("preHandler", async (req, reply) => {
+    const adminEndpoints = ["/api/update/perform", "/api/restart"];
+
+    if (adminEndpoints.some(ep => req.url.startsWith(ep))) {
+      const adminToken = req.headers["x-admin-token"];
+
+      if (!adminToken || adminToken !== ADMIN_TOKEN) {
+        reply.status(403).send("Admin access required. Check server logs for admin token.");
+        throw new Error('Admin access denied');
+      }
+
+      (req as any).accessLevel = "full";
+    } else {
+      (req as any).accessLevel = "restricted";
+    }
+  });
+
   server.addHook("preHandler", async (req, reply) => {
     if (req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
       const useAgents = []
@@ -270,15 +303,25 @@ async function run(options: RunOptions = {}) {
                   role: 'user',
                   content: toolMessages
                 })
-                const response = await fetch(`http://127.0.0.1:${config.PORT || 3456}/v1/messages`, {
+                // Validate port before making request
+                const requestPort = config.PORT || 3456;
+                if (requestPort < 1024 || requestPort > 65535) {
+                  console.error(`Invalid PORT for agent request: ${requestPort}`);
+                  return undefined;
+                }
+
+                const response = await fetch(`http://127.0.0.1:${requestPort}/v1/messages`, {
                   method: "POST",
                   headers: {
-                    'x-api-key': config.APIKEY,
+                    'x-api-key': config.APIKEY || '',
                     'content-type': 'application/json',
                   },
                   body: JSON.stringify(req.body),
-                })
+                  signal: AbortSignal.timeout(30000), // 30 second timeout
+                });
+
                 if (!response.ok) {
+                  console.error(`Agent request failed: ${response.status}`);
                   return undefined;
                 }
                 const stream = response.body!.pipeThrough(new SSEParserTransform())

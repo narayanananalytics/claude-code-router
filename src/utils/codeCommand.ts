@@ -8,7 +8,36 @@ import {
 import { quote } from 'shell-quote';
 import minimist from "minimist";
 import { createEnvVariables } from "./createEnvVariables";
+import { resolve } from "path";
+import { access, constants } from "fs/promises";
 
+/**
+ * Validates that the CLAUDE_PATH is safe to execute
+ * @param claudePath - The path to validate
+ * @returns true if valid, false otherwise
+ */
+async function validateClaudePath(claudePath: string): Promise<boolean> {
+  try {
+    const resolvedPath = resolve(claudePath);
+
+    // Check if file exists
+    await access(resolvedPath);
+
+    // On Unix, check if it's executable
+    if (process.platform !== 'win32') {
+      try {
+        await access(resolvedPath, constants.X_OK);
+      } catch {
+        console.error(`File ${resolvedPath} is not executable`);
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function executeCodeCommand(args: string[] = []) {
   // Set environment variables using shared function
@@ -45,14 +74,23 @@ export async function executeCodeCommand(args: string[] = []) {
   // Execute claude command
   const claudePath = config?.CLAUDE_PATH || process.env.CLAUDE_PATH || "claude";
 
-  const joinedArgs = args.length > 0 ? quote(args) : "";
+  // Validate claude path if it's not the default "claude" command
+  if (claudePath !== "claude") {
+    const isValidPath = await validateClaudePath(claudePath);
+    if (!isValidPath) {
+      console.error(`Invalid CLAUDE_PATH: ${claudePath}`);
+      decrementReferenceCount();
+      process.exit(1);
+    }
+  }
 
   const stdioConfig: StdioOptions = config.NON_INTERACTIVE_MODE
     ? ["pipe", "inherit", "inherit"] // Pipe stdin for non-interactive
     : "inherit"; // Default inherited behavior
 
-  const argsObj = minimist(args)
-  const argsArr = []
+  const argsObj = minimist(args);
+  const argsArr = [];
+
   for (const [argsObjKey, argsObjValue] of Object.entries(argsObj)) {
     if (argsObjKey !== '_' && argsObj[argsObjKey]) {
       const prefix = argsObjKey.length === 1 ? '-' : '--';
@@ -60,17 +98,21 @@ export async function executeCodeCommand(args: string[] = []) {
       if (argsObjValue === true) {
         argsArr.push(`${prefix}${argsObjKey}`);
       } else {
-        argsArr.push(`${prefix}${argsObjKey} ${JSON.stringify(argsObjValue)}`);
+        // Push flag and value as separate arguments (no shell needed)
+        argsArr.push(`${prefix}${argsObjKey}`);
+        argsArr.push(String(argsObjValue));
       }
     }
   }
+
+  // Don't use shell:true - pass arguments as array for security
   const claudeProcess = spawn(
     claudePath,
     argsArr,
     {
-      env: process.env,
+      env: { ...process.env, ...env },
       stdio: stdioConfig,
-      shell: true,
+      shell: false,  // IMPORTANT: Don't use shell to prevent injection
     }
   );
 

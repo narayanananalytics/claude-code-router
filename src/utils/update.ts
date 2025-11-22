@@ -5,6 +5,17 @@ import { readFileSync } from "fs";
 
 const execPromise = promisify(exec);
 
+// Whitelist allowed package name
+const ALLOWED_PACKAGE = "@musistudio/claude-code-router";
+
+/**
+ * Validates package name format to prevent injection
+ */
+function validatePackageName(packageName: string): boolean {
+  // Only allow scoped packages with specific format
+  return /^@[a-z0-9-]+\/[a-z0-9-]+$/.test(packageName);
+}
+
 /**
  * 检查是否有新版本可用
  * @param currentVersion 当前版本
@@ -12,16 +23,30 @@ const execPromise = promisify(exec);
  */
 export async function checkForUpdates(currentVersion: string) {
   try {
-    // 从npm registry获取最新版本信息
-    const { stdout } = await execPromise("npm view @musistudio/claude-code-router version");
+    const packageName = ALLOWED_PACKAGE;
+
+    // Validate package name format
+    if (!validatePackageName(packageName)) {
+      throw new Error('Invalid package name format');
+    }
+
+    // Use npm programmatically with properly quoted package name
+    const { stdout } = await execPromise(
+      `npm view ${JSON.stringify(packageName)} version`,
+      {
+        timeout: 10000,
+        env: { ...process.env, NO_UPDATE_NOTIFIER: 'true' }
+      }
+    );
+
     const latestVersion = stdout.trim();
-    
+
     // 比较版本
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
-    
+
     // 如果有更新，获取更新日志
     let changelog = "";
-    
+
     return { hasUpdate, latestVersion, changelog };
   } catch (error) {
     console.error("Error checking for updates:", error);
@@ -36,24 +61,37 @@ export async function checkForUpdates(currentVersion: string) {
  */
 export async function performUpdate() {
   try {
-    // 执行npm update命令
-    const { stdout, stderr } = await execPromise("npm update -g @musistudio/claude-code-router");
-    
-    if (stderr) {
+    const packageName = ALLOWED_PACKAGE;
+
+    // Validate package name
+    if (!validatePackageName(packageName)) {
+      throw new Error('Invalid package name');
+    }
+
+    // 执行npm update命令 with properly quoted package name
+    const { stdout, stderr } = await execPromise(
+      `npm update -g ${JSON.stringify(packageName)}`,
+      {
+        timeout: 60000,
+        env: { ...process.env, NO_UPDATE_NOTIFIER: 'true' }
+      }
+    );
+
+    if (stderr && !stderr.includes('npm WARN')) {
       console.error("Update stderr:", stderr);
     }
-    
+
     console.log("Update stdout:", stdout);
-    
-    return { 
-      success: true, 
-      message: "Update completed successfully. Please restart the application to apply changes." 
+
+    return {
+      success: true,
+      message: "Update completed successfully. Please restart the application to apply changes."
     };
   } catch (error) {
     console.error("Error performing update:", error);
-    return { 
-      success: false, 
-      message: `Failed to perform update: ${error instanceof Error ? error.message : 'Unknown error'}` 
+    return {
+      success: false,
+      message: `Failed to perform update: ${error instanceof Error ? error.message : 'Unknown error'}`
     };
   }
 }
