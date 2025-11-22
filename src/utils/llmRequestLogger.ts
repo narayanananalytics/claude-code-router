@@ -9,6 +9,7 @@ import { createWriteStream, WriteStream, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { HOME_DIR } from '../constants';
 import { sanitizeLogData } from './logSanitizer';
+import { budgetTracker } from './budgetTracker';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
 interface LLMRequestLog {
@@ -117,6 +118,15 @@ class LLMRequestLogger {
       };
 
       this.writeLog(logEntry);
+
+      // Record usage for budget tracking
+      if (usage && model) {
+        budgetTracker.recordUsage(
+          model,
+          usage.input_tokens || 0,
+          usage.output_tokens || 0
+        );
+      }
     } catch (error) {
       console.error('Failed to log LLM response:', error);
     }

@@ -6,6 +6,7 @@ import fastifyStatic from "@fastify/static";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import {calculateTokenCount} from "./utils/router";
+import { budgetTracker } from "./utils/budgetTracker";
 
 /**
  * Validates configuration object structure and values
@@ -530,6 +531,59 @@ export const createServer = (config: any): Server => {
     } catch (error) {
       console.error("Failed to clear LLM request logs:", error);
       reply.status(500).send({ error: "Failed to clear LLM request logs" });
+    }
+  });
+
+  // 获取预算配置端点
+  server.app.get("/api/budget", async (req, reply) => {
+    try {
+      const budget = budgetTracker.getBudget();
+      return budget;
+    } catch (error) {
+      console.error("Failed to get budget:", error);
+      reply.status(500).send({ error: "Failed to get budget" });
+    }
+  });
+
+  // 更新预算配置端点
+  server.app.post("/api/budget", {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (req, reply) => {
+    try {
+      const budget = req.body;
+      budgetTracker.updateBudget(budget);
+      return { success: true, message: "Budget updated successfully" };
+    } catch (error) {
+      console.error("Failed to update budget:", error);
+      reply.status(500).send({ error: "Failed to update budget" });
+    }
+  });
+
+  // 获取预算使用情况端点
+  server.app.get("/api/budget/usage", async (req, reply) => {
+    try {
+      const usage = budgetTracker.getUsage();
+      return usage;
+    } catch (error) {
+      console.error("Failed to get budget usage:", error);
+      reply.status(500).send({ error: "Failed to get budget usage" });
+    }
+  });
+
+  // 获取预算使用历史端点
+  server.app.get("/api/budget/history", async (req, reply) => {
+    try {
+      const days = parseInt((req.query as any).days || '30');
+      const history = budgetTracker.getUsageHistory(days);
+      return { history };
+    } catch (error) {
+      console.error("Failed to get budget history:", error);
+      reply.status(500).send({ error: "Failed to get budget history" });
     }
   });
 
