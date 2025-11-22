@@ -10,12 +10,55 @@ import {
 } from "../constants";
 import { cleanupLogFiles } from "./logCleanup";
 
+// Whitelist of environment variables allowed for interpolation
+// Only safe, non-sensitive variables should be included
+const ALLOWED_ENV_VARS = new Set([
+  // API Keys (user-controlled, intended for config)
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GROQ_API_KEY',
+  'GEMINI_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'AZURE_OPENAI_API_KEY',
+  'VOLCENGINE_API_KEY',
+  'SILICONFLOW_API_KEY',
+
+  // Common safe environment variables
+  'HOME',
+  'USER',
+  'USERPROFILE', // Windows equivalent of HOME
+  'HOSTNAME',
+  'LANG',
+  'TZ',
+
+  // Claude Code specific
+  'CLAUDE_PATH',
+  'ANTHROPIC_SMALL_FAST_MODEL',
+
+  // Port configuration
+  'PORT',
+  'HOST',
+
+  // Proxy settings
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+]);
+
 // Function to interpolate environment variables in config values
+// Only whitelisted variables are allowed for security
 const interpolateEnvVars = (obj: any): any => {
   if (typeof obj === "string") {
     // Replace $VAR_NAME or ${VAR_NAME} with environment variable values
     return obj.replace(/\$\{([^}]+)\}|\$([A-Z_][A-Z0-9_]*)/g, (match, braced, unbraced) => {
       const varName = braced || unbraced;
+
+      // Only interpolate whitelisted variables
+      if (!ALLOWED_ENV_VARS.has(varName)) {
+        console.warn(`Environment variable ${varName} is not whitelisted for interpolation. Ignoring.`);
+        return match; // Keep original if not whitelisted
+      }
+
       return process.env[varName] || match; // Keep original if env var doesn't exist
     });
   } else if (Array.isArray(obj)) {

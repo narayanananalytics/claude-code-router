@@ -8,6 +8,122 @@ import { homedir } from "os";
 import {calculateTokenCount} from "./utils/router";
 
 /**
+ * Validates configuration object structure and values
+ * @param config - The configuration object to validate
+ * @returns Validation result with any errors
+ */
+function validateConfig(config: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  // Validate PORT
+  if (config.PORT !== undefined) {
+    if (typeof config.PORT !== 'number' || config.PORT < 1024 || config.PORT > 65535) {
+      errors.push('PORT must be a number between 1024 and 65535');
+    }
+  }
+
+  // Validate HOST
+  if (config.HOST !== undefined) {
+    if (typeof config.HOST !== 'string') {
+      errors.push('HOST must be a string');
+    } else {
+      // Validate it's a valid IP or hostname
+      const validHost = /^(localhost|[\d.]+|[\w.-]+)$/.test(config.HOST);
+      if (!validHost) {
+        errors.push('HOST must be a valid hostname or IP address');
+      }
+    }
+  }
+
+  // Validate APIKEY
+  if (config.APIKEY !== undefined && typeof config.APIKEY !== 'string') {
+    errors.push('APIKEY must be a string');
+  }
+
+  // Validate Providers array
+  if (config.Providers !== undefined) {
+    if (!Array.isArray(config.Providers)) {
+      errors.push('Providers must be an array');
+    } else {
+      config.Providers.forEach((provider: any, index: number) => {
+        if (!provider.name || typeof provider.name !== 'string') {
+          errors.push(`Provider[${index}] must have a name (string)`);
+        }
+        if (!provider.api_base_url || typeof provider.api_base_url !== 'string') {
+          errors.push(`Provider[${index}] must have an api_base_url (string)`);
+        } else {
+          // Validate URL format
+          try {
+            new URL(provider.api_base_url);
+          } catch {
+            errors.push(`Provider[${index}] api_base_url must be a valid URL`);
+          }
+        }
+        if (!Array.isArray(provider.models)) {
+          errors.push(`Provider[${index}] must have models array`);
+        }
+        if (provider.api_key !== undefined && typeof provider.api_key !== 'string') {
+          errors.push(`Provider[${index}] api_key must be a string`);
+        }
+      });
+    }
+  }
+
+  // Validate Router
+  if (config.Router !== undefined) {
+    if (typeof config.Router !== 'object' || Array.isArray(config.Router)) {
+      errors.push('Router must be an object');
+    } else {
+      // Validate router model strings
+      const routerKeys = ['default', 'background', 'think', 'longContext', 'webSearch'];
+      routerKeys.forEach(key => {
+        if (config.Router[key] !== undefined && typeof config.Router[key] !== 'string') {
+          errors.push(`Router.${key} must be a string`);
+        }
+      });
+
+      // Validate longContextThreshold
+      if (config.Router.longContextThreshold !== undefined) {
+        if (typeof config.Router.longContextThreshold !== 'number' || config.Router.longContextThreshold < 0) {
+          errors.push('Router.longContextThreshold must be a positive number');
+        }
+      }
+    }
+  }
+
+  // Validate API_TIMEOUT_MS
+  if (config.API_TIMEOUT_MS !== undefined) {
+    if (typeof config.API_TIMEOUT_MS !== 'number' || config.API_TIMEOUT_MS < 1000 || config.API_TIMEOUT_MS > 600000) {
+      errors.push('API_TIMEOUT_MS must be a number between 1000 and 600000');
+    }
+  }
+
+  // Validate CUSTOM_ROUTER_PATH
+  if (config.CUSTOM_ROUTER_PATH !== undefined) {
+    if (typeof config.CUSTOM_ROUTER_PATH !== 'string') {
+      errors.push('CUSTOM_ROUTER_PATH must be a string');
+    } else if (!config.CUSTOM_ROUTER_PATH.endsWith('.js')) {
+      errors.push('CUSTOM_ROUTER_PATH must end with .js');
+    }
+  }
+
+  // Validate CLAUDE_PATH
+  if (config.CLAUDE_PATH !== undefined && typeof config.CLAUDE_PATH !== 'string') {
+    errors.push('CLAUDE_PATH must be a string');
+  }
+
+  // Validate NON_INTERACTIVE_MODE
+  if (config.NON_INTERACTIVE_MODE !== undefined && typeof config.NON_INTERACTIVE_MODE !== 'boolean') {
+    errors.push('NON_INTERACTIVE_MODE must be a boolean');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+
+/**
  * Validates that a log file path is safe to access
  * Prevents path traversal attacks
  * @param requestedPath - The requested file path (can be null/undefined for default)
@@ -74,14 +190,31 @@ export const createServer = (config: any): Server => {
   server.app.post("/api/config", async (req, reply) => {
     const newConfig = req.body;
 
+    // Validate config structure
+    const validation = validateConfig(newConfig);
+    if (!validation.valid) {
+      reply.status(400).send({
+        error: "Invalid configuration",
+        details: validation.errors
+      });
+      return;
+    }
+
     // Backup existing config file if it exists
     const backupPath = await backupConfigFile();
     if (backupPath) {
       console.log(`Backed up existing configuration file to ${backupPath}`);
     }
 
-    await writeConfigFile(newConfig);
-    return { success: true, message: "Config saved successfully" };
+    try {
+      await writeConfigFile(newConfig);
+      return { success: true, message: "Config saved successfully" };
+    } catch (error) {
+      reply.status(500).send({
+        error: "Failed to save config",
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   });
 
   // Add endpoint to restart the service with access control
