@@ -1,11 +1,48 @@
 import Server from "@musistudio/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { checkForUpdates, performUpdate } from "./utils";
-import { join } from "path";
+import { join, normalize, isAbsolute, relative } from "path";
 import fastifyStatic from "@fastify/static";
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import {calculateTokenCount} from "./utils/router";
+
+/**
+ * Validates that a log file path is safe to access
+ * Prevents path traversal attacks
+ * @param requestedPath - The requested file path (can be null/undefined for default)
+ * @returns The validated absolute path or null if invalid
+ */
+function validateLogFilePath(requestedPath: string | null | undefined): string | null {
+  const logDir = join(homedir(), ".claude-code-router", "logs");
+
+  // If no path specified, use default
+  if (!requestedPath) {
+    return join(logDir, "app.log");
+  }
+
+  // Resolve the requested path
+  let resolvedPath: string;
+  if (isAbsolute(requestedPath)) {
+    resolvedPath = normalize(requestedPath);
+  } else {
+    // If relative, join with log directory
+    resolvedPath = normalize(join(logDir, requestedPath));
+  }
+
+  // Check if resolved path is within log directory
+  const relativePath = relative(logDir, resolvedPath);
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    return null; // Path traversal attempt
+  }
+
+  // Only allow .log files
+  if (!resolvedPath.endsWith('.log')) {
+    return null;
+  }
+
+  return resolvedPath;
+}
 
 export const createServer = (config: any): Server => {
   const server = new Server(config);
@@ -149,14 +186,11 @@ export const createServer = (config: any): Server => {
   server.app.get("/api/logs", async (req, reply) => {
     try {
       const filePath = (req.query as any).file as string;
-      let logFilePath: string;
+      const logFilePath = validateLogFilePath(filePath);
 
-      if (filePath) {
-        // 如果指定了文件路径，使用指定的路径
-        logFilePath = filePath;
-      } else {
-        // 如果没有指定文件路径，使用默认的日志文件路径
-        logFilePath = join(homedir(), ".claude-code-router", "logs", "app.log");
+      if (!logFilePath) {
+        reply.status(400).send({ error: "Invalid log file path" });
+        return;
       }
 
       if (!existsSync(logFilePath)) {
@@ -177,14 +211,11 @@ export const createServer = (config: any): Server => {
   server.app.delete("/api/logs", async (req, reply) => {
     try {
       const filePath = (req.query as any).file as string;
-      let logFilePath: string;
+      const logFilePath = validateLogFilePath(filePath);
 
-      if (filePath) {
-        // 如果指定了文件路径，使用指定的路径
-        logFilePath = filePath;
-      } else {
-        // 如果没有指定文件路径，使用默认的日志文件路径
-        logFilePath = join(homedir(), ".claude-code-router", "logs", "app.log");
+      if (!logFilePath) {
+        reply.status(400).send({ error: "Invalid log file path" });
+        return;
       }
 
       if (existsSync(logFilePath)) {

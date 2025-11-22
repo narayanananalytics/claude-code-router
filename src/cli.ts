@@ -15,6 +15,7 @@ import { spawn, exec } from "child_process";
 import { PID_FILE, REFERENCE_COUNT_FILE } from "./constants";
 import fs, { existsSync, readFileSync } from "fs";
 import { join } from "path";
+import openurl from "openurl";
 
 const command = process.argv[2];
 
@@ -259,29 +260,27 @@ async function main() {
       // Add temporary API key as URL parameter if successfully generated
       const uiUrl = `${serviceInfo.endpoint}/ui/`;
 
-      console.log(`Opening UI at ${uiUrl}`);
-
-      // Open URL in browser based on platform
-      const platform = process.platform;
-      let openCommand = "";
-
-      if (platform === "win32") {
-        // Windows
-        openCommand = `start ${uiUrl}`;
-      } else if (platform === "darwin") {
-        // macOS
-        openCommand = `open ${uiUrl}`;
-      } else if (platform === "linux") {
-        // Linux
-        openCommand = `xdg-open ${uiUrl}`;
-      } else {
-        console.error("Unsupported platform for opening browser");
+      // Validate URL format before opening
+      try {
+        const parsedUrl = new URL(uiUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+          throw new Error('Invalid URL protocol');
+        }
+        if (!['127.0.0.1', 'localhost'].includes(parsedUrl.hostname)) {
+          throw new Error('URL must be localhost');
+        }
+      } catch (error: any) {
+        console.error('Invalid UI URL:', error.message);
         process.exit(1);
       }
 
-      exec(openCommand, (error) => {
+      console.log(`Opening UI at ${uiUrl}`);
+
+      // Use openurl library instead of exec for security
+      openurl.open(uiUrl, (error) => {
         if (error) {
-          console.error("Failed to open browser:", error.message);
+          console.error('Failed to open browser:', error.message);
+          console.log(`Please manually open: ${uiUrl}`);
           process.exit(1);
         }
       });
