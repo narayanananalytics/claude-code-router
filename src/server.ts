@@ -390,5 +390,148 @@ export const createServer = (config: any): Server => {
     }
   });
 
+  // 获取LLM请求日志端点
+  server.app.get("/api/llm-requests", async (req, reply) => {
+    try {
+      const logFile = join(homedir(), ".claude-code-router", "logs", "llm-requests.jsonl");
+
+      if (!existsSync(logFile)) {
+        return { requests: [], total: 0 };
+      }
+
+      const query = req.query as any;
+      const limit = parseInt(query.limit || '100');
+      const offset = parseInt(query.offset || '0');
+      const sessionId = query.sessionId as string | undefined;
+      const provider = query.provider as string | undefined;
+      const model = query.model as string | undefined;
+      const type = query.type as string | undefined; // 'request', 'response', or 'error'
+
+      // Read the entire file
+      const logContent = readFileSync(logFile, 'utf8');
+      const logLines = logContent.split('\n').filter(line => line.trim());
+
+      // Parse and filter logs
+      let logs = logLines
+        .map(line => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .filter(log => log !== null);
+
+      // Apply filters
+      if (sessionId) {
+        logs = logs.filter(log => log.sessionId === sessionId);
+      }
+      if (provider) {
+        logs = logs.filter(log => log.provider === provider);
+      }
+      if (model) {
+        logs = logs.filter(log => log.model === model);
+      }
+      if (type) {
+        logs = logs.filter(log => log.type === type);
+      }
+
+      // Sort by timestamp descending (newest first)
+      logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      const total = logs.length;
+      const paginatedLogs = logs.slice(offset, offset + limit);
+
+      return {
+        requests: paginatedLogs,
+        total,
+        limit,
+        offset
+      };
+    } catch (error) {
+      console.error("Failed to get LLM request logs:", error);
+      reply.status(500).send({ error: "Failed to get LLM request logs" });
+    }
+  });
+
+  // 获取LLM请求统计信息端点
+  server.app.get("/api/llm-requests/stats", async (req, reply) => {
+    try {
+      const logFile = join(homedir(), ".claude-code-router", "logs", "llm-requests.jsonl");
+
+      if (!existsSync(logFile)) {
+        return {
+          totalRequests: 0,
+          totalResponses: 0,
+          totalErrors: 0,
+          providers: {},
+          models: {}
+        };
+      }
+
+      const logContent = readFileSync(logFile, 'utf8');
+      const logLines = logContent.split('\n').filter(line => line.trim());
+
+      let totalRequests = 0;
+      let totalResponses = 0;
+      let totalErrors = 0;
+      const providers: Record<string, number> = {};
+      const models: Record<string, number> = {};
+
+      logLines.forEach(line => {
+        try {
+          const log = JSON.parse(line);
+
+          if (log.type === 'request') totalRequests++;
+          if (log.type === 'response') totalResponses++;
+          if (log.type === 'error') totalErrors++;
+
+          if (log.provider) {
+            providers[log.provider] = (providers[log.provider] || 0) + 1;
+          }
+          if (log.model) {
+            models[log.model] = (models[log.model] || 0) + 1;
+          }
+        } catch {
+          // Skip invalid lines
+        }
+      });
+
+      return {
+        totalRequests,
+        totalResponses,
+        totalErrors,
+        providers,
+        models
+      };
+    } catch (error) {
+      console.error("Failed to get LLM request stats:", error);
+      reply.status(500).send({ error: "Failed to get LLM request stats" });
+    }
+  });
+
+  // 清除LLM请求日志端点
+  server.app.delete("/api/llm-requests", {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (req, reply) => {
+    try {
+      const logFile = join(homedir(), ".claude-code-router", "logs", "llm-requests.jsonl");
+
+      if (existsSync(logFile)) {
+        writeFileSync(logFile, '', 'utf8');
+      }
+
+      return { success: true, message: "LLM request logs cleared successfully" };
+    } catch (error) {
+      console.error("Failed to clear LLM request logs:", error);
+      reply.status(500).send({ error: "Failed to clear LLM request logs" });
+    }
+  });
+
   return server;
 };

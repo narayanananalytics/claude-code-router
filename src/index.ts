@@ -23,6 +23,7 @@ import JSON5 from "json5";
 import { IAgent } from "./agents/type";
 import agentsManager from "./agents";
 import { EventEmitter } from "node:events";
+import { llmRequestLogger } from "./utils/llmRequestLogger";
 
 const event = new EventEmitter()
 
@@ -304,10 +305,28 @@ async function run(options: RunOptions = {}) {
         config,
         event
       });
+
+      // Log LLM request after routing is complete
+      if (req.body?.model) {
+        const [provider, model] = req.body.model.includes(',')
+          ? req.body.model.split(',')
+          : [undefined, req.body.model];
+        llmRequestLogger.logRequest(req, provider, model);
+        // Store start time for duration calculation
+        (req as any).llmRequestStartTime = Date.now();
+      }
     }
   });
   server.addHook("onError", async (request, reply, error) => {
     event.emit('onError', request, reply, error);
+
+    // Log LLM errors
+    if (request.url.startsWith("/v1/messages") && !request.url.startsWith("/v1/messages/count_tokens")) {
+      const [provider, model] = request.body?.model?.includes(',')
+        ? request.body.model.split(',')
+        : [undefined, request.body?.model];
+      llmRequestLogger.logError(request, error, provider, model);
+    }
   })
   server.addHook("onSend", (req, reply, payload, done) => {
     if (req.sessionId && req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
@@ -495,6 +514,24 @@ async function run(options: RunOptions = {}) {
   });
   server.addHook("onSend", async (req, reply, payload) => {
     event.emit('onSend', req, reply, payload);
+
+    // Log LLM response
+    if (req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
+      const startTime = (req as any).llmRequestStartTime;
+      const duration = startTime ? Date.now() - startTime : undefined;
+
+      const [provider, model] = req.body?.model?.includes(',')
+        ? req.body.model.split(',')
+        : [undefined, req.body?.model];
+
+      // For streaming responses, we log what we have (usage will be in sessionUsageCache)
+      if (payload instanceof ReadableStream) {
+        llmRequestLogger.logResponse(req, { stream: true }, duration || 0, provider, model);
+      } else if (typeof payload === 'object' && !payload.error) {
+        llmRequestLogger.logResponse(req, payload, duration || 0, provider, model);
+      }
+    }
+
     return payload;
   })
 
