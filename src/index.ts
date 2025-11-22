@@ -6,6 +6,7 @@ import { initConfig, initDir, cleanupLogFiles } from "./utils";
 import { createServer } from "./server";
 import { router } from "./utils/router";
 import { apiKeyAuth } from "./middleware/auth";
+import { sanitizeHeaders, sanitizeLogData } from "./utils/logSanitizer";
 import {
   cleanupPidFile,
   isServiceRunning,
@@ -82,17 +83,47 @@ async function run(options: RunOptions = {}) {
   // Save the PID of the background process
   savePid(process.pid);
 
-  // Handle SIGINT (Ctrl+C) to clean up PID file
-  process.on("SIGINT", () => {
-    console.log("Received SIGINT, cleaning up...");
-    cleanupPidFile();
-    process.exit(0);
-  });
+  // Setup comprehensive signal handling for graceful shutdown
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
+  let isShuttingDown = false;
 
-  // Handle SIGTERM to clean up PID file
-  process.on("SIGTERM", () => {
-    cleanupPidFile();
-    process.exit(0);
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      console.log('Already shutting down...');
+      return;
+    }
+
+    isShuttingDown = true;
+    console.log(`\nReceived ${signal}, starting graceful shutdown...`);
+
+    try {
+      // Stop accepting new connections
+      if (server && server.app) {
+        await server.app.close();
+        console.log('Server closed successfully');
+      }
+
+      // Clean up PID file
+      cleanupPidFile();
+
+      // Clean up reference count file if exists
+      const REFERENCE_COUNT_FILE = join(HOME_DIR, '.reference_count');
+      if (existsSync(REFERENCE_COUNT_FILE)) {
+        const fs = await import('fs');
+        fs.unlinkSync(REFERENCE_COUNT_FILE);
+      }
+
+      console.log('Graceful shutdown completed');
+      process.exit(0);
+    } catch (error) {
+      console.error('Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
+
+  // Register signal handlers
+  signals.forEach(signal => {
+    process.on(signal, () => gracefulShutdown(signal));
   });
 
   // Use port from environment variable if set (for background process)
@@ -144,6 +175,30 @@ async function run(options: RunOptions = {}) {
     logger: loggerConfig,
   });
 
+  // Configure rate limiting to prevent abuse
+  const rateLimit = await import('@fastify/rate-limit');
+  await server.app.register(rateLimit.default, {
+    max: 100, // 100 requests
+    timeWindow: '1 minute',
+    cache: 10000,
+    allowList: ['127.0.0.1', '::1'], // Whitelist localhost
+    skipOnError: true,
+    keyGenerator: (req: any) => {
+      // Use IP address for rate limiting
+      return req.headers['x-forwarded-for'] || req.ip || 'unknown';
+    },
+    errorResponseBuilder: (req: any, context: any) => {
+      return {
+        code: 429,
+        error: 'Too Many Requests',
+        message: `Rate limit exceeded. Retry after ${Math.ceil(context.ttl / 1000)} seconds.`,
+        retryAfter: Math.ceil(context.ttl / 1000),
+      };
+    },
+    // More restrictive limits for sensitive endpoints
+    nameSpace: 'global',
+  });
+
   // Add global error handlers to prevent the service from crashing
   process.on("uncaughtException", (err) => {
     server.logger.error("Uncaught exception:", err);
@@ -187,6 +242,30 @@ async function run(options: RunOptions = {}) {
       (req as any).accessLevel = "full";
     } else {
       (req as any).accessLevel = "restricted";
+    }
+  });
+
+  // Add request logging with sanitization
+  server.addHook("onRequest", async (req, reply) => {
+    if (config.LOG !== false) {
+      const sanitizedHeaders = sanitizeHeaders(req.headers as Record<string, any>);
+      req.log.debug({
+        url: req.url,
+        method: req.method,
+        headers: sanitizedHeaders,
+      }, 'Incoming request');
+    }
+  });
+
+  // Add response logging with sanitization
+  server.addHook("onResponse", async (req, reply) => {
+    if (config.LOG !== false) {
+      req.log.debug({
+        url: req.url,
+        method: req.method,
+        statusCode: reply.statusCode,
+        responseTime: reply.getResponseTime(),
+      }, 'Request completed');
     }
   });
 

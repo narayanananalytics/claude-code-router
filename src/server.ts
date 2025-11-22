@@ -187,7 +187,14 @@ export const createServer = (config: any): Server => {
   });
 
   // Add endpoint to save config.json with access control
-  server.app.post("/api/config", async (req, reply) => {
+  server.app.post("/api/config", {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (req, reply) => {
     const newConfig = req.body;
 
     // Validate config structure
@@ -218,7 +225,14 @@ export const createServer = (config: any): Server => {
   });
 
   // Add endpoint to restart the service with access control
-  server.app.post("/api/restart", async (req, reply) => {
+  server.app.post("/api/restart", {
+    config: {
+      rateLimit: {
+        max: 5,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (req, reply) => {
     reply.send({ success: true, message: "Service restart initiated" });
 
     // Restart the service after a short delay to allow response to be sent
@@ -244,7 +258,14 @@ export const createServer = (config: any): Server => {
   });
 
   // 版本检查端点
-  server.app.get("/api/update/check", async (req, reply) => {
+  server.app.get("/api/update/check", {
+    config: {
+      rateLimit: {
+        max: 20,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (req, reply) => {
     try {
       // 获取当前版本
       const currentVersion = require("../package.json").version;
@@ -262,7 +283,14 @@ export const createServer = (config: any): Server => {
   });
 
   // 执行更新端点
-  server.app.post("/api/update/perform", async (req, reply) => {
+  server.app.post("/api/update/perform", {
+    config: {
+      rateLimit: {
+        max: 3,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (req, reply) => {
     try {
       // 只允许完全访问权限的用户执行更新
       const accessLevel = (req as any).accessLevel || "restricted";
