@@ -208,12 +208,19 @@ async function run(options: RunOptions = {}) {
   process.on("unhandledRejection", (reason, promise) => {
     server.logger.error("Unhandled rejection at:", promise, "reason:", reason);
   });
-  // Generate admin token for this session
+  // Generate admin token for this session or use environment variable
   const crypto = await import("crypto");
-  const ADMIN_TOKEN = crypto.randomBytes(32).toString('hex');
+  const ADMIN_TOKEN = process.env.ADMIN_TOKEN || crypto.randomBytes(64).toString('hex');
+  
   if (config.LOG !== false) {
-    console.log(`\n🔐 Admin token for this session: ${ADMIN_TOKEN}`);
-    console.log('Set this as x-admin-token header for admin operations (update/restart)\n');
+    if (process.env.ADMIN_TOKEN) {
+      console.log('\n🔐 Using ADMIN_TOKEN from environment variable');
+      console.log('Set this as x-admin-token header for admin operations (update/restart)\n');
+    } else {
+      console.log(`\n🔐 Admin token for this session: ${ADMIN_TOKEN}`);
+      console.log('Set this as x-admin-token header for admin operations (update/restart)');
+      console.log('Tip: Set ADMIN_TOKEN environment variable to use a persistent token\n');
+    }
   }
 
   // Add async preHandler hook for authentication

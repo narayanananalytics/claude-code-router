@@ -12,6 +12,7 @@ const SENSITIVE_KEYS = [
   'authorization',
   'x-api-key',
   'x-admin-token',
+  'admin_token',
   'auth',
   'bearer',
   'credential',
@@ -21,12 +22,13 @@ const SENSITIVE_KEYS = [
 ];
 
 // Patterns to detect and redact sensitive values
+// All patterns have upper bounds to prevent ReDoS attacks
 const SENSITIVE_PATTERNS = [
-  /sk-[a-zA-Z0-9]{20,}/g,           // API keys starting with sk-
-  /Bearer\s+[a-zA-Z0-9_-]+/g,       // Bearer tokens
-  /[a-f0-9]{32,}/g,                 // Long hex strings (likely tokens)
-  /AIza[a-zA-Z0-9_-]{35}/g,         // Google API keys
-  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, // UUIDs (might be tokens)
+  /sk-[a-zA-Z0-9]{20,100}/g,         // API keys starting with sk- (bounded)
+  /Bearer\s+[a-zA-Z0-9_-]{1,500}/g,  // Bearer tokens (bounded)
+  /[a-f0-9]{32,256}/g,               // Long hex strings (bounded)
+  /AIza[a-zA-Z0-9_-]{35}/g,          // Google API keys (already bounded)
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, // UUIDs
 ];
 
 /**
@@ -35,6 +37,11 @@ const SENSITIVE_PATTERNS = [
  * @returns Sanitized string with sensitive data redacted
  */
 function sanitizeString(str: string): string {
+  // Reject excessively long strings to prevent ReDoS
+  if (str.length > 100000) {
+    return '***REDACTED_OVERSIZED***';
+  }
+
   let sanitized = str;
 
   // Redact common API key patterns

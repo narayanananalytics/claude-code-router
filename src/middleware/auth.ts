@@ -23,6 +23,15 @@ function safeCompare(a: string, b: string): boolean {
 export const apiKeyAuth =
   (config: any) =>
   async (req: FastifyRequest, reply: FastifyReply, done: () => void) => {
+    // Validate Host header to prevent Host header injection attacks
+    const allowedHosts = ['127.0.0.1', 'localhost'];
+    const host = req.headers.host?.split(':')[0]; // Remove port
+    
+    if (host && !allowedHosts.includes(host)) {
+      reply.status(400).send('Invalid Host header');
+      return;
+    }
+
     // Public endpoints that don't require authentication
     const publicEndpoints = ["/", "/health"];
     const isPublicEndpoint = publicEndpoints.includes(req.url);

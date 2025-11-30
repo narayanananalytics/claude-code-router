@@ -239,7 +239,10 @@ export const createServer = (config: any): Server => {
     // Restart the service after a short delay to allow response to be sent
     setTimeout(() => {
       const { spawn } = require("child_process");
-      spawn(process.execPath, [process.argv[1], "restart"], {
+      const { resolve } = require("path");
+      // Use absolute path instead of process.argv[1] to prevent injection
+      const cliPath = resolve(__dirname, 'cli.js');
+      spawn(process.execPath, [cliPath, "restart"], {
         detached: true,
         stdio: "ignore",
       });

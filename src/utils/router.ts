@@ -7,7 +7,7 @@ import { get_encoding } from "tiktoken";
 import { sessionUsageCache, Usage } from "./cache";
 import { readFile, access } from "fs/promises";
 import { opendir, stat } from "fs/promises";
-import { join, resolve, relative } from "path";
+import { join, resolve, relative, isAbsolute } from "path";
 import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "../constants";
 import { LRUCache } from "lru-cache";
 
@@ -121,12 +121,25 @@ const getProjectSpecificRouter = async (req: any) => {
   if (req.sessionId) {
     const project = await searchProjectBySession(req.sessionId);
     if (project) {
-      const projectConfigPath = join(HOME_DIR, project, "config.json");
-      const sessionConfigPath = join(
-        HOME_DIR,
-        project,
-        `${req.sessionId}.json`
-      );
+      // Validate project name to prevent path traversal
+      if (!/^[a-zA-Z0-9_-]+$/.test(project)) {
+        console.error(`Invalid project name format: ${project}`);
+        return undefined;
+      }
+
+      // Construct paths and validate they're within HOME_DIR
+      const projectConfigPath = resolve(HOME_DIR, project, "config.json");
+      const sessionConfigPath = resolve(HOME_DIR, project, `${req.sessionId}.json`);
+
+      // Verify paths are within HOME_DIR to prevent traversal
+      const relativeProject = relative(HOME_DIR, projectConfigPath);
+      const relativeSession = relative(HOME_DIR, sessionConfigPath);
+
+      if (relativeProject.startsWith('..') || isAbsolute(relativeProject) ||
+          relativeSession.startsWith('..') || isAbsolute(relativeSession)) {
+        console.error(`Path traversal attempt detected: ${project}`);
+        return undefined;
+      }
 
       // 首先尝试读取sessionConfig文件
       const sessionConfig = await readConfigFile(sessionConfigPath);
@@ -224,7 +237,14 @@ export const router = async (req: any, _res: any, context: any) => {
   if (req.body.metadata?.user_id) {
     const parts = req.body.metadata.user_id.split("_session_");
     if (parts.length > 1) {
-      req.sessionId = parts[1];
+      const sessionId = parts[1];
+      
+      // Validate sessionId format to prevent path traversal
+      if (!/^[a-zA-Z0-9-]{1,128}$/.test(sessionId)) {
+        req.log?.warn(`Invalid sessionId format: ${sessionId}`);
+      } else {
+        req.sessionId = sessionId;
+      }
     }
   }
   const lastMessageUsage = sessionUsageCache.get(req.sessionId);
@@ -254,6 +274,10 @@ export const router = async (req: any, _res: any, context: any) => {
           throw new Error('Invalid custom router path');
         }
 
+        // SECURITY WARNING: Custom routers execute with full process privileges.
+        // Only load custom routers from trusted sources (files in ~/.claude-code-router/routers/)
+        // Path validation above ensures the file is within allowed directories.
+        // Consider the custom router code as part of the application's trusted code base.
         const customRouter = require(config.CUSTOM_ROUTER_PATH);
         req.tokenCount = tokenCount; // Pass token count to custom router
 
