@@ -7,10 +7,12 @@ import { Providers } from "@/components/Providers";
 import { Router } from "@/components/Router";
 import { JsonEditor } from "@/components/JsonEditor";
 import { LogViewer } from "@/components/LogViewer";
+import { LLMRequestViewer } from "@/components/LLMRequestViewer";
+import { BudgetManager } from "@/components/BudgetManager";
 import { Button } from "@/components/ui/button";
 import { useConfig } from "@/components/ConfigProvider";
 import { api } from "@/lib/api";
-import { Settings, Languages, Save, RefreshCw, FileJson, CircleArrowUp, FileText } from "lucide-react";
+import { Settings, Languages, Save, RefreshCw, FileJson, CircleArrowUp, FileText, Activity, DollarSign } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -34,6 +36,8 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isJsonEditorOpen, setIsJsonEditorOpen] = useState(false);
   const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
+  const [isLLMRequestViewerOpen, setIsLLMRequestViewerOpen] = useState(false);
+  const [isBudgetManagerOpen, setIsBudgetManagerOpen] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null);
   // 版本检查状态
@@ -281,6 +285,12 @@ function App() {
           <Button variant="ghost" size="icon" onClick={() => setIsLogViewerOpen(true)} className="transition-all-ease hover:scale-110">
             <FileText className="h-5 w-5" />
           </Button>
+          <Button variant="ghost" size="icon" onClick={() => setIsLLMRequestViewerOpen(true)} className="transition-all-ease hover:scale-110">
+            <Activity className="h-5 w-5" />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => setIsBudgetManagerOpen(true)} className="transition-all-ease hover:scale-110">
+            <DollarSign className="h-5 w-5" />
+          </Button>
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="ghost" size="icon" className="transition-all-ease hover:scale-110">
@@ -355,10 +365,20 @@ function App() {
         onOpenChange={setIsJsonEditorOpen} 
         showToast={(message, type) => setToast({ message, type })} 
       />
-      <LogViewer 
-        open={isLogViewerOpen} 
-        onOpenChange={setIsLogViewerOpen} 
-        showToast={(message, type) => setToast({ message, type })} 
+      <LogViewer
+        open={isLogViewerOpen}
+        onOpenChange={setIsLogViewerOpen}
+        showToast={(message, type) => setToast({ message, type })}
+      />
+      <LLMRequestViewer
+        open={isLLMRequestViewerOpen}
+        onOpenChange={setIsLLMRequestViewerOpen}
+        showToast={(message, type) => setToast({ message, type })}
+      />
+      <BudgetManager
+        open={isBudgetManagerOpen}
+        onOpenChange={setIsBudgetManagerOpen}
+        showToast={(message, type) => setToast({ message, type })}
       />
       {/* 版本更新对话框 */}
       <Dialog open={isUpdateDialogOpen} onOpenChange={setIsUpdateDialogOpen}>

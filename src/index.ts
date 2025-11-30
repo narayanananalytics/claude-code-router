@@ -6,6 +6,7 @@ import { initConfig, initDir, cleanupLogFiles } from "./utils";
 import { createServer } from "./server";
 import { router } from "./utils/router";
 import { apiKeyAuth } from "./middleware/auth";
+import { sanitizeHeaders, sanitizeLogData } from "./utils/logSanitizer";
 import {
   cleanupPidFile,
   isServiceRunning,
@@ -22,6 +23,7 @@ import JSON5 from "json5";
 import { IAgent } from "./agents/type";
 import agentsManager from "./agents";
 import { EventEmitter } from "node:events";
+import { llmRequestLogger } from "./utils/llmRequestLogger";
 
 const event = new EventEmitter()
 
@@ -73,20 +75,56 @@ async function run(options: RunOptions = {}) {
 
   const port = config.PORT || 3456;
 
+  // Validate port to prevent SSRF attacks
+  if (typeof port !== 'number' || port < 1024 || port > 65535) {
+    console.error(`Invalid PORT: ${port}. Must be between 1024-65535`);
+    process.exit(1);
+  }
+
   // Save the PID of the background process
   savePid(process.pid);
 
-  // Handle SIGINT (Ctrl+C) to clean up PID file
-  process.on("SIGINT", () => {
-    console.log("Received SIGINT, cleaning up...");
-    cleanupPidFile();
-    process.exit(0);
-  });
+  // Setup comprehensive signal handling for graceful shutdown
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGQUIT'] as const;
+  let isShuttingDown = false;
 
-  // Handle SIGTERM to clean up PID file
-  process.on("SIGTERM", () => {
-    cleanupPidFile();
-    process.exit(0);
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      console.log('Already shutting down...');
+      return;
+    }
+
+    isShuttingDown = true;
+    console.log(`\nReceived ${signal}, starting graceful shutdown...`);
+
+    try {
+      // Stop accepting new connections
+      if (server && server.app) {
+        await server.app.close();
+        console.log('Server closed successfully');
+      }
+
+      // Clean up PID file
+      cleanupPidFile();
+
+      // Clean up reference count file if exists
+      const REFERENCE_COUNT_FILE = join(HOME_DIR, '.reference_count');
+      if (existsSync(REFERENCE_COUNT_FILE)) {
+        const fs = await import('fs');
+        fs.unlinkSync(REFERENCE_COUNT_FILE);
+      }
+
+      console.log('Graceful shutdown completed');
+      process.exit(0);
+    } catch (error) {
+      console.error('Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
+
+  // Register signal handlers
+  signals.forEach(signal => {
+    process.on(signal, () => gracefulShutdown(signal));
   });
 
   // Use port from environment variable if set (for background process)
@@ -138,6 +176,30 @@ async function run(options: RunOptions = {}) {
     logger: loggerConfig,
   });
 
+  // Configure rate limiting to prevent abuse
+  const rateLimit = await import('@fastify/rate-limit');
+  await server.app.register(rateLimit.default, {
+    max: 100, // 100 requests
+    timeWindow: '1 minute',
+    cache: 10000,
+    allowList: ['127.0.0.1', '::1'], // Whitelist localhost
+    skipOnError: true,
+    keyGenerator: (req: any) => {
+      // Use IP address for rate limiting
+      return req.headers['x-forwarded-for'] || req.ip || 'unknown';
+    },
+    errorResponseBuilder: (req: any, context: any) => {
+      return {
+        code: 429,
+        error: 'Too Many Requests',
+        message: `Rate limit exceeded. Retry after ${Math.ceil(context.ttl / 1000)} seconds.`,
+        retryAfter: Math.ceil(context.ttl / 1000),
+      };
+    },
+    // More restrictive limits for sensitive endpoints
+    nameSpace: 'global',
+  });
+
   // Add global error handlers to prevent the service from crashing
   process.on("uncaughtException", (err) => {
     server.logger.error("Uncaught exception:", err);
@@ -146,6 +208,14 @@ async function run(options: RunOptions = {}) {
   process.on("unhandledRejection", (reason, promise) => {
     server.logger.error("Unhandled rejection at:", promise, "reason:", reason);
   });
+  // Generate admin token for this session
+  const crypto = await import("crypto");
+  const ADMIN_TOKEN = crypto.randomBytes(32).toString('hex');
+  if (config.LOG !== false) {
+    console.log(`\n🔐 Admin token for this session: ${ADMIN_TOKEN}`);
+    console.log('Set this as x-admin-token header for admin operations (update/restart)\n');
+  }
+
   // Add async preHandler hook for authentication
   server.addHook("preHandler", async (req, reply) => {
     return new Promise((resolve, reject) => {
@@ -157,6 +227,49 @@ async function run(options: RunOptions = {}) {
       apiKeyAuth(config)(req, reply, done).catch(reject);
     });
   });
+
+  // Add admin access control for critical operations
+  server.addHook("preHandler", async (req, reply) => {
+    const adminEndpoints = ["/api/update/perform", "/api/restart"];
+
+    if (adminEndpoints.some(ep => req.url.startsWith(ep))) {
+      const adminToken = req.headers["x-admin-token"];
+
+      if (!adminToken || adminToken !== ADMIN_TOKEN) {
+        reply.status(403).send("Admin access required. Check server logs for admin token.");
+        throw new Error('Admin access denied');
+      }
+
+      (req as any).accessLevel = "full";
+    } else {
+      (req as any).accessLevel = "restricted";
+    }
+  });
+
+  // Add request logging with sanitization
+  server.addHook("onRequest", async (req, reply) => {
+    if (config.LOG !== false) {
+      const sanitizedHeaders = sanitizeHeaders(req.headers as Record<string, any>);
+      req.log.debug({
+        url: req.url,
+        method: req.method,
+        headers: sanitizedHeaders,
+      }, 'Incoming request');
+    }
+  });
+
+  // Add response logging with sanitization
+  server.addHook("onResponse", async (req, reply) => {
+    if (config.LOG !== false) {
+      req.log.debug({
+        url: req.url,
+        method: req.method,
+        statusCode: reply.statusCode,
+        responseTime: reply.getResponseTime(),
+      }, 'Request completed');
+    }
+  });
+
   server.addHook("preHandler", async (req, reply) => {
     if (req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
       const useAgents = []
@@ -192,10 +305,28 @@ async function run(options: RunOptions = {}) {
         config,
         event
       });
+
+      // Log LLM request after routing is complete
+      if (req.body?.model) {
+        const [provider, model] = req.body.model.includes(',')
+          ? req.body.model.split(',')
+          : [undefined, req.body.model];
+        llmRequestLogger.logRequest(req, provider, model);
+        // Store start time for duration calculation
+        (req as any).llmRequestStartTime = Date.now();
+      }
     }
   });
   server.addHook("onError", async (request, reply, error) => {
     event.emit('onError', request, reply, error);
+
+    // Log LLM errors
+    if (request.url.startsWith("/v1/messages") && !request.url.startsWith("/v1/messages/count_tokens")) {
+      const [provider, model] = request.body?.model?.includes(',')
+        ? request.body.model.split(',')
+        : [undefined, request.body?.model];
+      llmRequestLogger.logError(request, error, provider, model);
+    }
   })
   server.addHook("onSend", (req, reply, payload, done) => {
     if (req.sessionId && req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
@@ -270,15 +401,25 @@ async function run(options: RunOptions = {}) {
                   role: 'user',
                   content: toolMessages
                 })
-                const response = await fetch(`http://127.0.0.1:${config.PORT || 3456}/v1/messages`, {
+                // Validate port before making request
+                const requestPort = config.PORT || 3456;
+                if (requestPort < 1024 || requestPort > 65535) {
+                  console.error(`Invalid PORT for agent request: ${requestPort}`);
+                  return undefined;
+                }
+
+                const response = await fetch(`http://127.0.0.1:${requestPort}/v1/messages`, {
                   method: "POST",
                   headers: {
-                    'x-api-key': config.APIKEY,
+                    'x-api-key': config.APIKEY || '',
                     'content-type': 'application/json',
                   },
                   body: JSON.stringify(req.body),
-                })
+                  signal: AbortSignal.timeout(30000), // 30 second timeout
+                });
+
                 if (!response.ok) {
+                  console.error(`Agent request failed: ${response.status}`);
                   return undefined;
                 }
                 const stream = response.body!.pipeThrough(new SSEParserTransform())
@@ -373,6 +514,24 @@ async function run(options: RunOptions = {}) {
   });
   server.addHook("onSend", async (req, reply, payload) => {
     event.emit('onSend', req, reply, payload);
+
+    // Log LLM response
+    if (req.url.startsWith("/v1/messages") && !req.url.startsWith("/v1/messages/count_tokens")) {
+      const startTime = (req as any).llmRequestStartTime;
+      const duration = startTime ? Date.now() - startTime : undefined;
+
+      const [provider, model] = req.body?.model?.includes(',')
+        ? req.body.model.split(',')
+        : [undefined, req.body?.model];
+
+      // For streaming responses, we log what we have (usage will be in sessionUsageCache)
+      if (payload instanceof ReadableStream) {
+        llmRequestLogger.logResponse(req, { stream: true }, duration || 0, provider, model);
+      } else if (typeof payload === 'object' && !payload.error) {
+        llmRequestLogger.logResponse(req, payload, duration || 0, provider, model);
+      }
+    }
+
     return payload;
   })
 

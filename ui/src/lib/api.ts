@@ -235,6 +235,156 @@ class ApiClient {
   async clearLogs(filePath: string): Promise<void> {
     return this.delete<void>(`/logs?file=${encodeURIComponent(filePath)}`);
   }
+
+  // Get LLM request logs with optional filters
+  async getLLMRequests(params?: {
+    limit?: number;
+    offset?: number;
+    sessionId?: string;
+    provider?: string;
+    model?: string;
+    type?: 'request' | 'response' | 'error';
+  }): Promise<{
+    requests: Array<{
+      timestamp: string;
+      reqId: string;
+      sessionId?: string;
+      type: 'request' | 'response' | 'error';
+      provider?: string;
+      model?: string;
+      requestBody?: any;
+      responseBody?: any;
+      error?: any;
+      duration?: number;
+      usage?: { input_tokens?: number; output_tokens?: number };
+    }>;
+    total: number;
+    limit: number;
+    offset: number;
+  }> {
+    const queryParams = new URLSearchParams();
+    if (params) {
+      if (params.limit) queryParams.append('limit', params.limit.toString());
+      if (params.offset) queryParams.append('offset', params.offset.toString());
+      if (params.sessionId) queryParams.append('sessionId', params.sessionId);
+      if (params.provider) queryParams.append('provider', params.provider);
+      if (params.model) queryParams.append('model', params.model);
+      if (params.type) queryParams.append('type', params.type);
+    }
+
+    const query = queryParams.toString();
+    return this.get(`/llm-requests${query ? `?${query}` : ''}`);
+  }
+
+  // Get LLM request statistics
+  async getLLMRequestStats(): Promise<{
+    totalRequests: number;
+    totalResponses: number;
+    totalErrors: number;
+    providers: Record<string, number>;
+    models: Record<string, number>;
+  }> {
+    return this.get('/llm-requests/stats');
+  }
+
+  // Clear all LLM request logs
+  async clearLLMRequests(): Promise<{ success: boolean; message: string }> {
+    return this.delete('/llm-requests');
+  }
+
+  // Get budget configuration
+  async getBudget(): Promise<{
+    daily?: {
+      tokens?: number;
+      requests?: number;
+      estimatedCost?: number;
+    };
+    monthly?: {
+      tokens?: number;
+      requests?: number;
+      estimatedCost?: number;
+    };
+    pricing?: {
+      [modelKey: string]: {
+        inputTokens: number;
+        outputTokens: number;
+      };
+    };
+  }> {
+    return this.get('/budget');
+  }
+
+  // Update budget configuration
+  async updateBudget(budget: {
+    daily?: {
+      tokens?: number;
+      requests?: number;
+      estimatedCost?: number;
+    };
+    monthly?: {
+      tokens?: number;
+      requests?: number;
+      estimatedCost?: number;
+    };
+    pricing?: {
+      [modelKey: string]: {
+        inputTokens: number;
+        outputTokens: number;
+      };
+    };
+  }): Promise<{ success: boolean; message: string }> {
+    return this.post('/budget', budget);
+  }
+
+  // Get budget usage
+  async getBudgetUsage(): Promise<{
+    daily: {
+      date: string;
+      tokens: number;
+      requests: number;
+      estimatedCost: number;
+      inputTokens: number;
+      outputTokens: number;
+    };
+    monthly: {
+      month: string;
+      tokens: number;
+      requests: number;
+      estimatedCost: number;
+      inputTokens: number;
+      outputTokens: number;
+    };
+    percentages: {
+      daily: {
+        tokens?: number;
+        requests?: number;
+        cost?: number;
+      };
+      monthly: {
+        tokens?: number;
+        requests?: number;
+        cost?: number;
+      };
+    };
+    isOverBudget: {
+      daily: boolean;
+      monthly: boolean;
+    };
+  }> {
+    return this.get('/budget/usage');
+  }
+
+  // Get budget history
+  async getBudgetHistory(days: number = 30): Promise<{
+    history: Array<{
+      date: string;
+      tokens: number;
+      requests: number;
+      estimatedCost: number;
+    }>;
+  }> {
+    return this.get(`/budget/history?days=${days}`);
+  }
 }
 
 // Create a default instance of the API client

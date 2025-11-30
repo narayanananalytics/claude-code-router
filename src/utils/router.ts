@@ -7,7 +7,7 @@ import { get_encoding } from "tiktoken";
 import { sessionUsageCache, Usage } from "./cache";
 import { readFile, access } from "fs/promises";
 import { opendir, stat } from "fs/promises";
-import { join } from "path";
+import { join, resolve, relative } from "path";
 import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "../constants";
 import { LRUCache } from "lru-cache";
 
@@ -66,6 +66,45 @@ export const calculateTokenCount = (
   }
   return tokenCount;
 };
+
+// Allowed directories for custom router files
+const ALLOWED_ROUTER_DIRS = [
+  join(HOME_DIR, "routers"),  // ~/.claude-code-router/routers/
+];
+
+/**
+ * Validates that a router path is safe to load
+ * @param routerPath - The path to validate
+ * @returns true if valid, false otherwise
+ */
+async function validateRouterPath(routerPath: string): Promise<boolean> {
+  try {
+    const absolutePath = resolve(routerPath);
+
+    // Check if path is within allowed directories
+    const isAllowed = ALLOWED_ROUTER_DIRS.some(allowedDir => {
+      const relativePath = relative(allowedDir, absolutePath);
+      return relativePath && !relativePath.startsWith('..') && !relativePath.includes('..');
+    });
+
+    if (!isAllowed) {
+      console.error(`Router path ${routerPath} is outside allowed directories`);
+      return false;
+    }
+
+    // Verify file exists and has .js extension
+    if (!absolutePath.endsWith('.js')) {
+      console.error('Router file must have .js extension');
+      return false;
+    }
+
+    await access(absolutePath);
+    return true;
+  } catch (error) {
+    console.error('Error validating router path:', error);
+    return false;
+  }
+}
 
 const readConfigFile = async (filePath: string) => {
   try {
@@ -209,11 +248,23 @@ export const router = async (req: any, _res: any, context: any) => {
     let model;
     if (config.CUSTOM_ROUTER_PATH) {
       try {
+        const isValid = await validateRouterPath(config.CUSTOM_ROUTER_PATH);
+        if (!isValid) {
+          req.log.error(`Invalid custom router path: ${config.CUSTOM_ROUTER_PATH}`);
+          throw new Error('Invalid custom router path');
+        }
+
         const customRouter = require(config.CUSTOM_ROUTER_PATH);
         req.tokenCount = tokenCount; // Pass token count to custom router
-        model = await customRouter(req, config, {
-          event,
-        });
+
+        // Add timeout to prevent infinite loops
+        const ROUTER_TIMEOUT = 5000; // 5 seconds
+        model = await Promise.race([
+          customRouter(req, config, { event }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Router timeout')), ROUTER_TIMEOUT)
+          )
+        ]);
       } catch (e: any) {
         req.log.error(`failed to load custom router: ${e.message}`);
       }
