@@ -91,6 +91,11 @@ export async function executeCodeCommand(args: string[] = []) {
   const argsObj = minimist(args);
   const argsArr = [];
 
+  // Add positional arguments first
+  if (argsObj._ && argsObj._.length > 0) {
+    argsArr.push(...argsObj._.map(String));
+  }
+
   for (const [argsObjKey, argsObjValue] of Object.entries(argsObj)) {
     if (argsObjKey !== '_' && argsObj[argsObjKey]) {
       const prefix = argsObjKey.length === 1 ? '-' : '--';

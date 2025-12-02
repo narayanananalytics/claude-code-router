@@ -272,7 +272,6 @@ async function run(options: RunOptions = {}) {
         url: req.url,
         method: req.method,
         statusCode: reply.statusCode,
-        responseTime: reply.getResponseTime(),
       }, 'Request completed');
     }
   });
